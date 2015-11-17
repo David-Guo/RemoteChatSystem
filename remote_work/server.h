@@ -1,4 +1,5 @@
 #include "clientPool.h"
+#include "fifo.h"
 
 
 class Server {
@@ -13,10 +14,15 @@ class Server {
         void clientBroadcast(int sourceID, string msg);
         void serverBroadcast(string msg);
         void error(const char* eroMsg);
+        
+        bool preFifoParse(string cmdline, int nowId, int &readFD, int& writeFD);
+        void pipeCharEarse(string &cmdline);
 
         
     public:
         ClientPool m_clientPool;
+        Fifo m_fifo;
+        
 
 };
 

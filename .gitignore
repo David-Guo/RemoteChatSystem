@@ -1,2 +1,4 @@
 demo/main
 .~lock*
+temp/*
+temp

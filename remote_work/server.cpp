@@ -12,6 +12,7 @@
 #include <sys/time.h>
 #include <strings.h>
 #include <stdlib.h>
+#include <fcntl.h>
 #include "server.h"
 
 #define QLEN          150
@@ -51,7 +52,12 @@ bool Server::service(int sockfd){
     string msgline = tempStr.substr(pos1, pos2 - pos1);
     pos2 = tempStr.find_first_of(" \n", pos1);
     string nameline = tempStr.substr(pos1, pos2 - pos1);
-    
+
+    /* 判断public pipe 是否存在与存储错误信息 */
+    int readFD = -1;
+    int writeFD = -1;
+    string readMsg = "";
+    string writeMsg = "";
 
     if ( cmd == "who") {
         m_clientPool.printUser(nowId); 
@@ -87,8 +93,21 @@ bool Server::service(int sockfd){
         sendMessage(destId - 1, nowId, tellmsg);
         //tell(tempStr);
     }
-    else 
-        cursh->parseCommand(tempStr);
+    else {
+        if (preFifoParse(tempStr, nowId, readFD, writeFD) == true)
+            pipeCharEarse(tempStr);
+            cursh->parseCommand(tempStr);
+        /* 存在 Fifo 则广播信息，包括读写信息或错误信息 */
+        /*if (readFD != -1)*/
+            //serverBroadcast(readMsg);
+        //if (writeFD != -1)
+            /*serverBroadcast(writeMsg)*/;
+    }
+
+    if (readFD != -1) 
+        close(readFD);
+    if (writeFD != -1)
+        close(writeFD);
 
     dup2(tempStdinFd, 0);
     dup2(tempStdoutFd, 1);
@@ -245,5 +264,115 @@ void Server::serverBroadcast(string msg) {
             sendMessage(i, msg);
 }
 
-/* 处理通信指令 */
+bool Server::preFifoParse(string cmdline, int nowId, int &readFD, int &writeFD) {
+
+    /* 字符 <> 出现的Postion */
+    size_t ioPos = 0;
+    string readMsg;
+    string writeMsg;
+    string readError;
+    string writeError;
+
+    while (1) {
+        ioPos = cmdline.find_first_of("<>", ioPos + 1);
+        if (ioPos == string::npos)
+            break;
+
+        if (cmdline[ioPos + 1] != ' ') {
+            int numPos = cmdline.find_first_of(" \n", ioPos + 1);
+            int fifoId = atoi(cmdline.substr(ioPos + 1, numPos - ioPos + 1).c_str()) - 1;
+
+            if (cmdline[ioPos] == '<') {
+                /* state == 0 表示文件不存在数据, 广播信息，标记state*/
+                if (m_fifo.v_readState[fifoId] == 0) {
+                    readMsg = "*** ";
+                    readMsg += m_clientPool.v_clients[nowId].name;
+                    readMsg += " (#";
+                    readMsg += to_string(nowId + 1);
+                    readMsg += ") just received via \'";
+                    string tempStr = cmdline;
+                    tempStr.pop_back();
+                    readMsg += tempStr;
+                    readMsg += "\'\n";
+                    serverBroadcast(readMsg);
+
+                    string filename = m_fifo.v_fileName[fifoId];
+                    int tempFD = open(filename.c_str(), O_RDONLY, 0666);
+                    assert(tempFD > 0);
+                    readFD = tempFD;
+                    dup2(tempFD, 0);
+                    m_fifo.v_readState[fifoId] = 1;
+                }
+                /* state == 1 表示数据存在，给自己发送错误信息 */
+                else {
+                    readError = "*** Error: public pipe ";
+                    readError += to_string(fifoId);
+                    readError += " does not exist yet.***\n";
+                    sendMessage(nowId, readError);
+                    return false;
+                }
+            }
+            else {
+                if (m_fifo.v_writeState[fifoId] == 0) {
+                    writeMsg = "*** ";
+                    writeMsg += m_clientPool.v_clients[nowId].name;
+                    writeMsg += " (#";
+                    writeMsg += to_string(nowId + 1);
+                    writeMsg += ") just piped \'";
+                    string tempStr = cmdline;
+                    tempStr.pop_back();
+                    writeMsg += tempStr;
+                    writeMsg += "\'\n";
+                    serverBroadcast(writeMsg);
+
+                    string filename = m_fifo.v_fileName[fifoId];
+                    int tempFD = open(filename.c_str(), O_WRONLY | O_TRUNC | O_CREAT, 0666);
+                    assert(tempFD > 0);
+                    writeFD = tempFD;
+                    dup2(tempFD, 1);
+                    m_fifo.v_writeState[fifoId] = 1;
+                }
+                else {
+                    writeError = "*** Error: public pipe ";
+                    writeError += to_string(fifoId);
+                    writeError += " already exists. ***\n";
+                    sendMessage(nowId, writeError);
+                    return false;
+                }
+            }
+        }
+        /* 如果字符<> 的后一个字符是空格 */
+        else 
+            continue;
+    }
+
+    return true;
+}
+
+
+void Server::pipeCharEarse(string &cmdline) {
+    size_t pos = 0;
+    string tempStr;
+
+    bool isBreakChar = false;
+    for (pos = 0; pos < cmdline.size(); pos++) {
+        if(!isBreakChar && cmdline[pos] != '<' && cmdline[pos] != '>')
+            tempStr += cmdline[pos];
+        else if ((cmdline[pos] == '<' || cmdline[pos] == '>') && cmdline[pos + 1] != ' ' && cmdline[pos + 1] != '\n') 
+            isBreakChar = true;
+        else if (cmdline[pos] == '<' || cmdline[pos] == '>')
+            tempStr += cmdline[pos];
+        else if (cmdline[pos] == ' ' || cmdline[pos] == '\n') {
+            tempStr += cmdline[pos];
+            isBreakChar = false;
+        }
+    }
+
+    cmdline = tempStr;
+}
+
+
+
+
+
 
