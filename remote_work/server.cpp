@@ -63,45 +63,58 @@ bool Server::service(int sockfd){
         m_clientPool.printUser(nowId); 
     } 
     else if (cmd == "name") {
-        m_clientPool.changeName(nowId, nameline);
-        string nameMsg = "*** User from ";
-        nameMsg += m_clientPool.v_clients[nowId].ip;
-        nameMsg += '/';
-        nameMsg += m_clientPool.v_clients[nowId].port;
-        nameMsg += " is named \'";
-        nameMsg += nameline;
-        nameMsg += "\'. ***\n";
-        serverBroadcast(nameMsg);
+        if (isNameExist(nameline) == false) {
+            m_clientPool.changeName(nowId, nameline);
+            string nameMsg = "*** User from ";
+            nameMsg += m_clientPool.v_clients[nowId].ip;
+            nameMsg += '/';
+            nameMsg += m_clientPool.v_clients[nowId].port;
+            nameMsg += " is named \'";
+            nameMsg += nameline;
+            nameMsg += "\'. ***\n";
+            serverBroadcast(nameMsg);
+        }
+        else {
+            string nameMsg = "*** User \'";
+            nameMsg += nameline;
+            nameMsg += "\' already exists. ***\n";
+            sendMessage(nowId, nameMsg);
+        }
     }
     else if (cmd == "yell") {
         string yellMsg = "*** The User ";
         yellMsg += m_clientPool.v_clients[nowId].name;
-        yellMsg += " yealled ***: ";
+        yellMsg += " yealed ***: ";
         yellMsg += msgline + "\n";
         serverBroadcast(yellMsg);
     }
     else if (cmd == "tell") {
         int destId = atoi(nameline.c_str());
-        string tellmsg = "*** ";
-        tellmsg += m_clientPool.v_clients[nowId].name;
-        tellmsg += " told you ***: ";
-        /* 解析命令中的信息 */
-        pos1 = tempStr.find_first_not_of(' ', pos2);
-        pos2 = tempStr.find_first_of('\n', pos1);
-        tellmsg += tempStr.substr(pos1, pos2 - pos1);
-        tellmsg += '\n';
-        sendMessage(destId - 1, nowId, tellmsg);
-        //tell(tempStr);
+        /* 错误处理给自己发错误信息 */
+        if (string::size_type(destId) > m_clientPool.v_clients.size() || m_clientPool.v_clients[destId - 1].isActive == false) {
+            string tellmsg = "*** Error: User #";
+            tellmsg += nameline;
+            tellmsg += " does not exist yet. ***\n";
+            sendMessage(nowId, tellmsg);
+        }
+        else { 
+            string tellmsg = "*** ";
+            tellmsg += m_clientPool.v_clients[nowId].name;
+            tellmsg += " told you ***: ";
+            /* 解析命令中的信息 */
+            pos1 = tempStr.find_first_not_of(' ', pos2);
+            pos2 = tempStr.find_first_of('\n', pos1);
+            tellmsg += tempStr.substr(pos1, pos2 - pos1);
+            tellmsg += '\n';
+            sendMessage(destId - 1, nowId, tellmsg);
+        }
     }
+    /* 不是内建通信命令 */
     else {
-        if (preFifoParse(tempStr, nowId, readFD, writeFD) == true)
+        if (preFifoParse(tempStr, nowId, readFD, writeFD) == true) {
             pipeCharEarse(tempStr);
             cursh->parseCommand(tempStr);
-        /* 存在 Fifo 则广播信息，包括读写信息或错误信息 */
-        /*if (readFD != -1)*/
-            //serverBroadcast(readMsg);
-        //if (writeFD != -1)
-            /*serverBroadcast(writeMsg)*/;
+        }
     }
 
     if (readFD != -1) 
@@ -280,11 +293,11 @@ bool Server::preFifoParse(string cmdline, int nowId, int &readFD, int &writeFD) 
 
         if (cmdline[ioPos + 1] != ' ') {
             int numPos = cmdline.find_first_of(" \n", ioPos + 1);
-            int fifoId = atoi(cmdline.substr(ioPos + 1, numPos - ioPos + 1).c_str()) - 1;
+            int fifoId = atoi(cmdline.substr(ioPos + 1, numPos - ioPos + 1).c_str());
 
             if (cmdline[ioPos] == '<') {
-                /* state == 0 表示文件不存在数据, 广播信息，标记state*/
-                if (m_fifo.v_readState[fifoId] == 0) {
+                /* writestate == 1表示文件存在，广播读取信息，重置wirteState */
+                if (m_fifo.v_writeState[fifoId] == 1) {
                     readMsg = "*** ";
                     readMsg += m_clientPool.v_clients[nowId].name;
                     readMsg += " (#";
@@ -301,9 +314,10 @@ bool Server::preFifoParse(string cmdline, int nowId, int &readFD, int &writeFD) 
                     assert(tempFD > 0);
                     readFD = tempFD;
                     dup2(tempFD, 0);
-                    m_fifo.v_readState[fifoId] = 1;
+                    m_fifo.v_writeState[fifoId] = 0;
+
                 }
-                /* state == 1 表示数据存在，给自己发送错误信息 */
+                /* writestate == 0 表示文件不存在数据, 打印错误信息*/
                 else {
                     readError = "*** Error: public pipe ";
                     readError += to_string(fifoId);
@@ -372,6 +386,13 @@ void Server::pipeCharEarse(string &cmdline) {
 }
 
 
+bool Server::isNameExist(string s) {
+    for (string::size_type i = 0; i < m_clientPool.v_clients.size(); i++) {
+        if (s == m_clientPool.v_clients[i].name)
+            return true;
+    }
+    return false;
+}
 
 
 

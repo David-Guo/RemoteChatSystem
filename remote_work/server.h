@@ -14,6 +14,7 @@ class Server {
         void clientBroadcast(int sourceID, string msg);
         void serverBroadcast(string msg);
         void error(const char* eroMsg);
+        bool isNameExist(string s);
         
         bool preFifoParse(string cmdline, int nowId, int &readFD, int& writeFD);
         void pipeCharEarse(string &cmdline);
