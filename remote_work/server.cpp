@@ -29,6 +29,9 @@ bool Server::service(int sockfd){
 
     int nowId = m_clientPool.findUser(sockfd);
     Mysh *cursh = m_clientPool.v_clients[nowId].mysh;
+    cursh->PATH = m_clientPool.v_clients[nowId].PATH;
+    setenv("PATH", cursh->PATH.c_str(), 2);
+    //cursh->setEnv(cursh->PATH);
     cursh->isExit = false;
 
     //p.setENV("setenv PATH bin:. ");
@@ -36,22 +39,26 @@ bool Server::service(int sockfd){
     string tempStr;
     std::getline(std::cin,tempStr);
     size_t tempPos = tempStr.find_first_of("\r", 0);
-    tempStr[tempPos] = '\n';
+    if ( tempPos != string::npos )
+        tempStr[tempPos] = '\n';
 
     /* 判断是否为Commuication 指令 */
     /* pos1 找非空格字符
      * pos2 找空格或换行字符
      */
-    int pos1 = tempStr.find_first_not_of(' ', 0);
+    size_t pos1 = tempStr.find_first_not_of(' ', 0);
     int pos2 = tempStr.find_first_of(" \n", pos1);
     string cmd = tempStr.substr(pos1, pos2 - pos1);
 
     pos1 = tempStr.find_first_not_of(' ', pos2);
+    string nameline, msgline;
+    if ( pos1 != string::npos ) {
 
-    pos2 = tempStr.find_first_of("\n", pos1);
-    string msgline = tempStr.substr(pos1, pos2 - pos1);
-    pos2 = tempStr.find_first_of(" \n", pos1);
-    string nameline = tempStr.substr(pos1, pos2 - pos1);
+        pos2 = tempStr.find_first_of("\n", pos1);
+        string msgline = tempStr.substr(pos1, pos2 - pos1);
+        pos2 = tempStr.find_first_of(" \n", pos1);
+        string nameline = tempStr.substr(pos1, pos2 - pos1);
+    }
 
     /* 判断public pipe 是否存在与存储错误信息 */
     int readFD = -1;
@@ -114,6 +121,7 @@ bool Server::service(int sockfd){
         if (preFifoParse(tempStr, nowId, readFD, writeFD) == true) {
             pipeCharEarse(tempStr);
             cursh->parseCommand(tempStr);
+            m_clientPool.v_clients[nowId].PATH = cursh->PATH;
         }
     }
 

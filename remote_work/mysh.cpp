@@ -12,7 +12,7 @@ void Mysh::setEnv(string line) {
     int lastPnt = line.find_first_not_of(" ", firstPnt + 4);
     firstPnt = line.find_first_of(" \n", lastPnt);
     PATH = line.substr(lastPnt, firstPnt - lastPnt);
-    //setenv("PATH", PATH.c_str(), 2);
+    setenv("PATH", PATH.c_str(), 2);
     //cout << "courent PATH" << PATH << endl;
 }
 
@@ -192,7 +192,7 @@ bool Mysh::executeProcess(string str, Pipe readPipeToDestroy, int pipefd[2], int
         if (pipefd[1] != outOrErr) close(pipefd[1]);
         int Status = execvp(argv[0], argv);
         if (Status == -1) {
-            cerr << "Unknown commmand: [" << args[0] << "]." << endl;
+            cerr << "Unknown command: [" << args[0] << "]." << endl;
         }
         exit(1);
     }
