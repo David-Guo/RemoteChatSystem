@@ -11,9 +11,11 @@
 #include <sys/wait.h>
 #include <sys/time.h>
 #include <strings.h>
+#include <string.h>
 #include <stdlib.h>
 #include <fcntl.h>
 #include "server.h"
+using namespace std;
 
 #define QLEN          150
 using namespace std;
@@ -41,6 +43,7 @@ bool Server::service(int sockfd){
     size_t tempPos = tempStr.find_first_of("\r", 0);
     if ( tempPos != string::npos )
         tempStr[tempPos] = '\n';
+    tempStr += '\n';
 
     /* 判断是否为Commuication 指令 */
     /* pos1 找非空格字符
@@ -55,9 +58,9 @@ bool Server::service(int sockfd){
     if ( pos1 != string::npos ) {
 
         pos2 = tempStr.find_first_of("\n", pos1);
-        string msgline = tempStr.substr(pos1, pos2 - pos1);
+        msgline = tempStr.substr(pos1, pos2 - pos1);
         pos2 = tempStr.find_first_of(" \n", pos1);
-        string nameline = tempStr.substr(pos1, pos2 - pos1);
+        nameline = tempStr.substr(pos1, pos2 - pos1);
     }
 
     /* 判断public pipe 是否存在与存储错误信息 */
@@ -103,6 +106,7 @@ bool Server::service(int sockfd){
             tellmsg += nameline;
             tellmsg += " does not exist yet. ***\n";
             sendMessage(nowId, tellmsg);
+            cout << flush;
         }
         else { 
             string tellmsg = "*** ";
@@ -180,7 +184,8 @@ Server::Server(string port) {
     int fd, nfds;
 
     msock = passivesock(port);
-    nfds = getdtablesize();
+    //nfds = getdtablesize();
+    nfds = 1024;
     FD_ZERO(&afds);
     FD_SET(msock, &afds);
 
@@ -301,7 +306,7 @@ bool Server::preFifoParse(string cmdline, int nowId, int &readFD, int &writeFD) 
 
         if (cmdline[ioPos + 1] != ' ') {
             int numPos = cmdline.find_first_of(" \n", ioPos + 1);
-            int fifoId = atoi(cmdline.substr(ioPos + 1, numPos - ioPos + 1).c_str());
+            int fifoId = atoi(cmdline.substr(ioPos + 1, numPos - ioPos - 1).c_str());
 
             if (cmdline[ioPos] == '<') {
                 /* writestate == 1表示文件存在，广播读取信息，重置wirteState */

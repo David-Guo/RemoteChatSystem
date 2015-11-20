@@ -17,7 +17,7 @@ void Mysh::setEnv(string line) {
 }
 
 void Mysh::printEnv() {
-    cout << "PATH=" << PATH << endl;
+    cout << "PATH=" << PATH << endl << flush;
 }
 
 void Mysh::parseCommand(string s){
