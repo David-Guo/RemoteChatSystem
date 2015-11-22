@@ -118,7 +118,6 @@ bool Server::service(int sockfd){
         /* 不是内建通信命令 */
         else {
             if (preFifoClient(tempStr, nowId, readFD, writeFD) == true) {
-                pipeCharEarse(tempStr);
                 cursh->parseCommand(tempStr);
                 m_clientPool.v_clients[nowId].PATH = cursh->PATH;
             }
@@ -358,6 +357,10 @@ bool Server::preFifoParse(string cmdline, int nowFd) {
                     readError += to_string(fifoId);
                     readError += " does not exist yet.***\n";
                     sendMessage(nowId, readError);
+                    dup2(tempStdoutFd, 1);
+                    dup2(tempStderrFd, 2);
+                    copyToShmemory(to_string(readFD), pMesg->message[0]);
+                    copyToShmemory(to_string(writeFD), pMesg->message[1]);
                     return false;
                 }
             }
@@ -382,6 +385,10 @@ bool Server::preFifoParse(string cmdline, int nowFd) {
                     writeError += to_string(fifoId);
                     writeError += " already exists. ***\n";
                     sendMessage(nowId, writeError);
+                    dup2(tempStdoutFd, 1);
+                    dup2(tempStderrFd, 2);
+                    copyToShmemory(to_string(readFD), pMesg->message[0]);
+                    copyToShmemory(to_string(writeFD), pMesg->message[1]);
                     return false;
                 }
             }
@@ -396,15 +403,18 @@ bool Server::preFifoParse(string cmdline, int nowFd) {
     /* 传递fifo 文件打开信息到share memory 0 1 */
     copyToShmemory(to_string(readFD), pMesg->message[0]);
     copyToShmemory(to_string(writeFD), pMesg->message[1]);
+    if (readFD != 1 || writeFD != 1)
+        return true;
     return true;
 }
 
 
-bool Server::preFifoClient(string cmdline, int nowId, int &readFD, int &writeFD) {
+bool Server::preFifoClient(string &cmdline, int nowId, int &readFD, int &writeFD) {
 
     if ((pMesg = (Mesg *) shmat(shmid, NULL, 0)) == (Mesg*) - 1)
         error("shamt failed");
-    /* 唤醒parent 进程解析public pipe */
+    /* 初始化share memoty */
+    pMesg->isSuccess = false;
     pMesg->srcSocketFD = m_clientPool.v_clients[nowId].sock;
     copyToShmemory("publicPipe", pMesg->message[0]);
     copyToShmemory(cmdline, pMesg->message[1]);
@@ -413,38 +423,46 @@ bool Server::preFifoClient(string cmdline, int nowId, int &readFD, int &writeFD)
     if (shmdt(pMesg) < 0) 
         error("shmdt failed");
 
+    /* 唤醒parent 进程解析public pipe */
     pid_t ppid = getppid();
     kill(ppid, SIGUSR1);
     pause();
-    /* 从share memory 中取出解析结果 */
+    /* 重新 attatch share memory */
     if ((pMesg = (Mesg *)shmat(shmid, NULL, 0)) == (Mesg *) -1) 
         error("shmat failed");
-
+    
+    /* 从share memory 中取出解析结果 */
+    bool isSuccess = pMesg->isSuccess;
+    pMesg->isSuccess = false;
     string message[2];
     message[0] = pMesg->message[0];
     message[1] = pMesg->message[1];
+    
 
     if (shmdt(pMesg) < 0)
         error("shmdt, failed");
 
-    if (message[0] != "-1") {
+    if (isSuccess) {
+        if (message[0] != "-1" ) {
+            
+            string filename = m_fifo.v_fileName[atoi(message[0].c_str())];
+            int tempFD = open(filename.c_str(), O_RDONLY, 0666);
+            assert(tempFD > 0);
+            readFD = tempFD;
+            dup2(readFD, 0);
+        }
+        if (message[1] != "-1" ) {
 
-        string filename = m_fifo.v_fileName[atoi(message[0].c_str())];
-        int tempFD = open(filename.c_str(), O_RDONLY, 0666);
-        assert(tempFD > 0);
-        readFD = tempFD;
-        dup2(readFD, 0);
+            string filename = m_fifo.v_fileName[atoi(message[1].c_str())];
+            //cout << < "filename" << filename << endl;
+            int tempFD = open(filename.c_str(), O_WRONLY | O_TRUNC | O_CREAT, 0666);
+            assert(tempFD > 0);
+            writeFD = tempFD;
+            dup2(writeFD, 1);
+        }
+        pipeCharEarse(cmdline);
     }
-    if (message[1] != "-1") {
-
-        string filename = m_fifo.v_fileName[atoi(message[1].c_str())];
-        //cout << filename << endl;
-        int tempFD = open(filename.c_str(), O_WRONLY | O_TRUNC | O_CREAT, 0666);
-        assert(tempFD > 0);
-        writeFD = tempFD;
-        dup2(writeFD, 1);
-    }
-    return true;
+    return isSuccess;
 }
 
 
@@ -518,7 +536,7 @@ void Server::sigusrHandle(int sig) {
         else if (cmdMsg == "yell") thisServer->yellHandle(pMesg->srcSocketFD, msg);
         else if (cmdMsg == "tell") thisServer->tellHandle(pMesg->srcSocketFD, msg);
         else if (cmdMsg == "publicPipe") {
-            thisServer->preFifoParse(msg, pMesg->srcSocketFD);
+            pMesg->isSuccess = thisServer->preFifoParse(msg, pMesg->srcSocketFD);
         }
         else if (cmdMsg == "broadcast") thisServer->serverBroadcast(msg);
         else if (cmdMsg == "exit") {

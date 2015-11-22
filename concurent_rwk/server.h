@@ -63,7 +63,7 @@ class Server {
         void pipeCharEarse(string &cmdline);
 
         /* 当前进程处理public pipe */
-        bool preFifoClient(string cmdline, int nowId, int &readFD, int &write);
+        bool preFifoClient(string &cmdline, int nowId, int &readFD, int &write);
 
         
     public:
@@ -73,7 +73,9 @@ class Server {
 
 };
 
+
 typedef struct {
+    bool isSuccess;
     int srcSocketFD;
     int srcPid;
     char message[3][1024];
