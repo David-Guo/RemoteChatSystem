@@ -58,9 +58,12 @@ class Server {
 
         void copyToShmemory(string cmd, char *message);
 
-        
-        bool preFifoParse(string cmdline, int nowId, int &readFD, int& writeFD);
+        /* parent 进程处理public pipe */ 
+        bool preFifoParse(string cmdline, int nowFd);
         void pipeCharEarse(string &cmdline);
+
+        /* 当前进程处理public pipe */
+        bool preFifoClient(string cmdline, int nowId, int &readFD, int &write);
 
         
     public:

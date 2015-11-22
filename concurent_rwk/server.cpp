@@ -1,4 +1,5 @@
 #include "server.h"
+
 using namespace std;
 
 #define QLEN 30
@@ -32,9 +33,10 @@ bool Server::service(int sockfd){
         string tempStr;
         std::getline(std::cin,tempStr);
         size_t tempPos = tempStr.find_first_of("\r", 0);
-        if ( tempPos != string::npos )
+        if (tempPos != string::npos)
             tempStr[tempPos] = '\n';
-        tempStr += '\n';
+        if (tempStr.find_first_of("\n", 0) == string::npos)
+            tempStr += '\n';
 
         /* 判断是否为Commuication 指令 */
         /* pos1 找非空格字符
@@ -76,7 +78,7 @@ bool Server::service(int sockfd){
             /* 发送信号唤醒parent */
             pid_t ppid = getppid();
             kill(ppid, SIGUSR1);
-            //            pause();
+            pause();
         } 
         else if (cmd == "name") {
             assert(nameline != "");
@@ -94,7 +96,7 @@ bool Server::service(int sockfd){
             /* 发送信号唤醒parent */
             pid_t ppid = getppid();
             kill(ppid, SIGUSR1);
-            //           pause();
+            pause();
         }
         else if (cmd == "yell" || cmd ==  "tell") {
             assert(nameline != "");
@@ -111,11 +113,11 @@ bool Server::service(int sockfd){
             /* 发送信号唤醒parent */
             pid_t ppid = getppid();
             kill(ppid, SIGUSR1);
-            //pause();
+            pause();
         }
         /* 不是内建通信命令 */
         else {
-            if (preFifoParse(tempStr, nowId, readFD, writeFD) == true) {
+            if (preFifoClient(tempStr, nowId, readFD, writeFD) == true) {
                 pipeCharEarse(tempStr);
                 cursh->parseCommand(tempStr);
                 m_clientPool.v_clients[nowId].PATH = cursh->PATH;
@@ -127,19 +129,22 @@ bool Server::service(int sockfd){
         if (writeFD != -1)
             close(writeFD);
 
+        dup2(sockfd, 0);
+        dup2(sockfd, 1);
 
         if (cursh->isExit == true)
         {   
-            dup2(tempStderrFd ,2);
-            dup2(tempStdinFd, 0);
-            dup2(tempStdoutFd, 1);
+            /*dup2(tempStderrFd ,2);*/
+            //dup2(tempStdinFd, 0);
+            /*dup2(tempStdoutFd, 1);*/
             return false;
         }
-        sendMessage(nowId, "% ");
+        cout << "% "; 
 
     }
     return true;
 }
+
 
 int Server::passivesock(string port) {
     struct protoent *ppe;
@@ -252,7 +257,7 @@ Server::Server(string port) {
             pid_t ppid = getppid();
             kill(ppid, SIGUSR1);
             pause();
-
+            close(msock);
             exit(0);
         }
 
@@ -261,6 +266,7 @@ Server::Server(string port) {
 
 
 Server::~Server() {};
+
 
 void Server::error(const char *eroMsg) {
     cerr << eroMsg << ":" << strerror(errno) << endl;
@@ -302,9 +308,17 @@ void Server::serverBroadcast(string msg) {
             sendMessage(i, msg);
 }
 
-bool Server::preFifoParse(string cmdline, int nowId, int &readFD, int &writeFD) {
+
+bool Server::preFifoParse(string cmdline, int nowFd) {
+    int nowId = m_clientPool.findUser(nowFd);
+    /* 没有下面的dup切换，非通讯命令会block 目前还不知道为什么 */
+    int tempStdoutFd = dup(1);
+    int tempStderrFd = dup(2);
+    dup2(nowFd, 1);
+    dup2(nowFd, 2);
 
     /* 字符 <> 出现的Postion */
+    int readFD = -1, writeFD = -1;
     size_t ioPos = 0;
     string readMsg;
     string writeMsg;
@@ -334,11 +348,7 @@ bool Server::preFifoParse(string cmdline, int nowId, int &readFD, int &writeFD) 
                     readMsg += "\'\n";
                     serverBroadcast(readMsg);
 
-                    string filename = m_fifo.v_fileName[fifoId];
-                    int tempFD = open(filename.c_str(), O_RDONLY, 0666);
-                    assert(tempFD > 0);
-                    readFD = tempFD;
-                    dup2(tempFD, 0);
+                    readFD = fifoId;
                     m_fifo.v_writeState[fifoId] = 0;
 
                 }
@@ -364,11 +374,7 @@ bool Server::preFifoParse(string cmdline, int nowId, int &readFD, int &writeFD) 
                     writeMsg += "\'\n";
                     serverBroadcast(writeMsg);
 
-                    string filename = m_fifo.v_fileName[fifoId];
-                    int tempFD = open(filename.c_str(), O_WRONLY | O_TRUNC | O_CREAT, 0666);
-                    assert(tempFD > 0);
-                    writeFD = tempFD;
-                    dup2(tempFD, 1);
+                    writeFD = fifoId;
                     m_fifo.v_writeState[fifoId] = 1;
                 }
                 else {
@@ -385,14 +391,65 @@ bool Server::preFifoParse(string cmdline, int nowId, int &readFD, int &writeFD) 
             continue;
     }
 
+    dup2(tempStdoutFd, 1);
+    dup2(tempStderrFd, 2);
+    /* 传递fifo 文件打开信息到share memory 0 1 */
+    copyToShmemory(to_string(readFD), pMesg->message[0]);
+    copyToShmemory(to_string(writeFD), pMesg->message[1]);
     return true;
 }
 
 
-void Server::pipeCharEarse(string &cmdline) {
-    size_t pos = 0;
-    string tempStr;
+bool Server::preFifoClient(string cmdline, int nowId, int &readFD, int &writeFD) {
 
+    if ((pMesg = (Mesg *) shmat(shmid, NULL, 0)) == (Mesg*) - 1)
+        error("shamt failed");
+    /* 唤醒parent 进程解析public pipe */
+    pMesg->srcSocketFD = m_clientPool.v_clients[nowId].sock;
+    copyToShmemory("publicPipe", pMesg->message[0]);
+    copyToShmemory(cmdline, pMesg->message[1]);
+    pMesg->srcPid = getpid();
+
+    if (shmdt(pMesg) < 0) 
+        error("shmdt failed");
+
+    pid_t ppid = getppid();
+    kill(ppid, SIGUSR1);
+    pause();
+    /* 从share memory 中取出解析结果 */
+    if ((pMesg = (Mesg *)shmat(shmid, NULL, 0)) == (Mesg *) -1) 
+        error("shmat failed");
+
+    string message[2];
+    message[0] = pMesg->message[0];
+    message[1] = pMesg->message[1];
+
+    if (shmdt(pMesg) < 0)
+        error("shmdt, failed");
+
+    if (message[0] != "-1") {
+
+        string filename = m_fifo.v_fileName[atoi(message[0].c_str())];
+        int tempFD = open(filename.c_str(), O_RDONLY, 0666);
+        assert(tempFD > 0);
+        readFD = tempFD;
+        dup2(readFD, 0);
+    }
+    if (message[1] != "-1") {
+
+        string filename = m_fifo.v_fileName[atoi(message[1].c_str())];
+        //cout << filename << endl;
+        int tempFD = open(filename.c_str(), O_WRONLY | O_TRUNC | O_CREAT, 0666);
+        assert(tempFD > 0);
+        writeFD = tempFD;
+        dup2(writeFD, 1);
+    }
+    return true;
+}
+
+
+void Server::pipeCharEarse(string &cmdline) { 
+    size_t pos = 0; string tempStr; 
     bool isBreakChar = false;
     for (pos = 0; pos < cmdline.size(); pos++) {
         if(!isBreakChar && cmdline[pos] != '<' && cmdline[pos] != '>')
@@ -419,6 +476,7 @@ bool Server::isNameExist(string s) {
     return false;
 }
 
+
 int Server::catchSignal(int sig, void (*handle)(int)) {
     struct sigaction action;
     action.sa_handler = handle;
@@ -442,7 +500,6 @@ void Server::sigintHandle(int sig) {
     exit(0);
 }
 
-
 /* client 发送信号唤醒server完成通信功能 */
 void Server::sigusrHandle(int sig) {
     /* 唤醒子进程信号 */
@@ -460,6 +517,9 @@ void Server::sigusrHandle(int sig) {
         else if (cmdMsg == "name") thisServer->nameHandle(pMesg->srcSocketFD, msg);
         else if (cmdMsg == "yell") thisServer->yellHandle(pMesg->srcSocketFD, msg);
         else if (cmdMsg == "tell") thisServer->tellHandle(pMesg->srcSocketFD, msg);
+        else if (cmdMsg == "publicPipe") {
+            thisServer->preFifoParse(msg, pMesg->srcSocketFD);
+        }
         else if (cmdMsg == "broadcast") thisServer->serverBroadcast(msg);
         else if (cmdMsg == "exit") {
             int nowId = thisServer->m_clientPool.findUser(pMesg->srcSocketFD);
@@ -476,15 +536,20 @@ void Server::sigusrHandle(int sig) {
             cout << "\t[Info] Close connect" << endl;
         }
 
+        /* 此行一定要加，必须在detach share memory 之前报错pid 信息 */
+        int senderPid = pMesg->srcPid;
         /* detach share memory */
         if (shmdt(pMesg) < 0) 
             cerr << "shmdt failed" << endl;
-        /* 唤醒信号发送者 */
-        //kill(pMesg->srcPid, SIGUSR2);
+        /* 唤醒信号发送者 
+         * 一定要在 share memory 释放之后发送信号！不然会产生对资源的竞争！
+         */
+        kill(senderPid, SIGUSR2);
     }
     else {}
 
 }
+
 
 void Server::whoHandle(int fd) {
     int tempFd = dup(1);
@@ -555,15 +620,15 @@ void Server::tellHandle(int fd, string msgline) {
         dup2(tempStderrFd, 2);
         return ;
     }
-        string tellmsg = "*** ";
-        tellmsg += m_clientPool.v_clients[nowId].name;
-        tellmsg += " told you ***: ";
-        tellmsg += tellContent;
-        tellmsg += '\n';
-        sendMessage(destId - 1, nowId, tellmsg);
+    string tellmsg = "*** ";
+    tellmsg += m_clientPool.v_clients[nowId].name;
+    tellmsg += " told you ***: ";
+    tellmsg += tellContent;
+    tellmsg += '\n';
+    sendMessage(destId - 1, nowId, tellmsg);
 
-        dup2(tempStdoutFd, 1);
-        dup2(tempStderrFd, 2);
+    dup2(tempStdoutFd, 1);
+    dup2(tempStderrFd, 2);
 }
 
 
