@@ -8,7 +8,7 @@ int main(int argc, char *argv[]) {
         //exit(1);
     /*}*/
 
-    if (chdir ("../ras") != 0) {
+    if (chdir ("./ras") != 0) {
         cerr << "Change working directory failed" << endl;
     }
 

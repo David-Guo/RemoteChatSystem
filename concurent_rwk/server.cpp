@@ -23,8 +23,8 @@ bool Server::service(int sockfd){
 
     int nowId = m_clientPool.findUser(sockfd);
     Mysh *cursh = m_clientPool.v_clients[nowId].mysh;
-    //cursh->PATH = m_clientPool.v_clients[nowId].PATH;
-    //setenv("PATH", cursh->PATH.c_str(), 2);
+    cursh->PATH = m_clientPool.v_clients[nowId].PATH;
+    setenv("PATH", cursh->PATH.c_str(), 2);
     //cursh->setEnv(cursh->PATH);
     //cursh->isExit = false;
 
@@ -344,7 +344,7 @@ bool Server::preFifoParse(string cmdline, int nowFd) {
                     string tempStr = cmdline;
                     tempStr.pop_back();
                     readMsg += tempStr;
-                    readMsg += "\'\n";
+                    readMsg += "\' ***\n";
                     serverBroadcast(readMsg);
 
                     readFD = fifoId;
@@ -374,7 +374,7 @@ bool Server::preFifoParse(string cmdline, int nowFd) {
                     string tempStr = cmdline;
                     tempStr.pop_back();
                     writeMsg += tempStr;
-                    writeMsg += "\'\n";
+                    writeMsg += "\' ***\n";
                     serverBroadcast(writeMsg);
 
                     writeFD = fifoId;
