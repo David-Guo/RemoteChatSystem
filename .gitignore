@@ -2,3 +2,5 @@ demo/main
 .~lock*
 temp/*
 temp
+remote_work/*.swp
+remote_work/rws/*
