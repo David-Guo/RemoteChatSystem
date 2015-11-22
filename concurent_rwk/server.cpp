@@ -178,7 +178,7 @@ Server::Server(string port) {
     /* Parent signal handle */
     if (catchSignal(SIGINT, Server::sigintHandle) == -1)
         cerr << "Handle SIGINT failed." << endl;
-    if (catchSignal(SIGCHLD, Server::sigchldHandle) == -1) 
+    if (catchSignal(SIGCHLD, SIG_IGN) == -1) 
         cerr << "Handle SIGCHLD failed." << endl;
     /* 向父进程发送信号，处理通信命令 */
     if (catchSignal(SIGUSR1, Server::sigusrHandle) == -1)
@@ -245,7 +245,7 @@ Server::Server(string port) {
             /* 唤醒parent */    
             pid_t ppid = getppid();
             kill(ppid, SIGUSR1);
-            pause();
+            //pause();
 
             if(msock) close(msock);
             exit(0);
