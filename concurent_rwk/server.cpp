@@ -76,7 +76,7 @@ bool Server::service(int sockfd){
             /* 发送信号唤醒parent */
             pid_t ppid = getppid();
             kill(ppid, SIGUSR1);
-//            pause();
+            //            pause();
         } 
         else if (cmd == "name") {
             assert(nameline != "");
@@ -94,7 +94,7 @@ bool Server::service(int sockfd){
             /* 发送信号唤醒parent */
             pid_t ppid = getppid();
             kill(ppid, SIGUSR1);
- //           pause();
+            //           pause();
         }
         else if (cmd == "yell" || cmd ==  "tell") {
             assert(nameline != "");
@@ -111,7 +111,7 @@ bool Server::service(int sockfd){
             /* 发送信号唤醒parent */
             pid_t ppid = getppid();
             kill(ppid, SIGUSR1);
-  //          pause();
+            //pause();
         }
         /* 不是内建通信命令 */
         else {
@@ -127,9 +127,14 @@ bool Server::service(int sockfd){
         if (writeFD != -1)
             close(writeFD);
 
-        
+
         if (cursh->isExit == true)
+        {   
+            dup2(tempStderrFd ,2);
+            dup2(tempStdinFd, 0);
+            dup2(tempStdoutFd, 1);
             return false;
+        }
         sendMessage(nowId, "% ");
 
     }
@@ -224,6 +229,7 @@ Server::Server(string port) {
         if ((childpid = fork()) < 0) 
             cerr << "server: fork error" << endl;
         else if (childpid == 0) { 
+            if(msock) close(msock);
             // child process
             signal(SIGCHLD, NULL);
             /* 关闭其他进程的socket */
@@ -245,9 +251,8 @@ Server::Server(string port) {
             /* 唤醒parent */    
             pid_t ppid = getppid();
             kill(ppid, SIGUSR1);
-            //pause();
+            pause();
 
-            if(msock) close(msock);
             exit(0);
         }
 
@@ -426,7 +431,7 @@ int Server::catchSignal(int sig, void (*handle)(int)) {
 void Server::sigchldHandle(int sig) {
     int status;
     while(wait3(&status, WNOHANG, NULL))
-            ;
+        ;
 }
 
 
@@ -443,40 +448,41 @@ void Server::sigusrHandle(int sig) {
     /* 唤醒子进程信号 */
     if (sig == SIGUSR1) {
 
-    if ((pMesg = (Mesg *)shmat(shmid, NULL, 0)) == (Mesg *) - 1) {
-        cerr << "shamt failed " << endl;
-        exit(1);
+        if ((pMesg = (Mesg *)shmat(shmid, NULL, 0)) == (Mesg *) - 1) {
+            cerr << "shamt failed " << endl;
+            exit(1);
+        }
+
+        string cmdMsg = string(pMesg->message[0]);
+        string msg = string(pMesg->message[1]);
+
+        if (cmdMsg == "who") thisServer->whoHandle(pMesg->srcSocketFD); 
+        else if (cmdMsg == "name") thisServer->nameHandle(pMesg->srcSocketFD, msg);
+        else if (cmdMsg == "yell") thisServer->yellHandle(pMesg->srcSocketFD, msg);
+        else if (cmdMsg == "tell") thisServer->tellHandle(pMesg->srcSocketFD, msg);
+        else if (cmdMsg == "broadcast") thisServer->serverBroadcast(msg);
+        else if (cmdMsg == "exit") {
+            int nowId = thisServer->m_clientPool.findUser(pMesg->srcSocketFD);
+            /* 广播离线消息 */
+            string logoutMsg = "*** User \'";
+            logoutMsg += thisServer->m_clientPool.v_clients[nowId].name;
+            logoutMsg += "\' left. ***\n";
+            thisServer->serverBroadcast(logoutMsg);
+
+            /* 完成对clientPool 的清理工作 */
+            thisServer->m_clientPool.v_clients[nowId].isActive = false;
+            close(pMesg->srcSocketFD);
+            kill(pMesg->srcPid, SIGUSR2);
+            cout << "\t[Info] Close connect" << endl;
+        }
+
+        /* detach share memory */
+        if (shmdt(pMesg) < 0) 
+            cerr << "shmdt failed" << endl;
+        /* 唤醒信号发送者 */
+        //kill(pMesg->srcPid, SIGUSR2);
     }
-
-    string cmdMsg = string(pMesg->message[0]);
-    string msg = string(pMesg->message[1]);
-
-    if (cmdMsg == "who") thisServer->whoHandle(pMesg->srcSocketFD); 
-    else if (cmdMsg == "name") thisServer->nameHandle(pMesg->srcSocketFD, msg);
-    else if (cmdMsg == "yell") thisServer->yellHandle(pMesg->srcSocketFD, msg);
-    else if (cmdMsg == "tell") thisServer->tellHandle(pMesg->srcSocketFD, msg);
-    else if (cmdMsg == "broadcast") thisServer->serverBroadcast(msg);
-    else if (cmdMsg == "exit") {
-        int nowId = thisServer->m_clientPool.findUser(pMesg->srcSocketFD);
-        /* 广播离线消息 */
-        string logoutMsg = "*** User \'";
-        logoutMsg += thisServer->m_clientPool.v_clients[nowId].name;
-        logoutMsg += "\' left. ***\n";
-        thisServer->serverBroadcast(logoutMsg);
-
-        /* 完成对clientPool 的清理工作 */
-        thisServer->m_clientPool.v_clients[nowId].isActive = false;
-        close(pMesg->srcSocketFD);
-    }
-
-    /* detach share memory */
-    if (shmdt(pMesg) < 0) 
-        cerr << "shmdt failed" << endl;
-
-    /* 唤醒信号发送者 */
-    //kill(pMesg->srcPid, SIGUSR2);
-    }
-    else {};
+    else {}
 
 }
 
@@ -523,6 +529,10 @@ void Server::yellHandle(int fd, string msgline) {
 
 
 void Server::tellHandle(int fd, string msgline) {
+    int tempStdoutFd = dup(1);
+    int tempStderrFd = dup(2);
+    dup2(fd, 1);
+    dup2(fd, 2);
     int nowId = m_clientPool.findUser(fd);
     /* 找空格 */
     int pos1 = msgline.find_first_of(' ', 0);
@@ -536,20 +546,24 @@ void Server::tellHandle(int fd, string msgline) {
     int destId = atoi(idMsg.c_str());
     /* 错误处理给自己发错误信息 */
     if (string::size_type(destId) > m_clientPool.v_clients.size() || m_clientPool.v_clients[destId - 1].isActive == false) {
-        string tellmsg = "*** Error: User #";
-        tellmsg += idMsg;
-        tellmsg += " does not exist yet. ***\n";
-        sendMessage(nowId, tellmsg);
-        cout << flush;
+        /*string tellmsg = "*** Error: User #";*/
+        //tellmsg += idMsg;
+        //tellmsg += " does not exist yet. ***\n";
+        /*sendMessage(nowId, tellmsg);*/
+        cout << "*** Error: user #" << idMsg << " does not exist yet. ***" << endl;
+        dup2(tempStdoutFd, 1);
+        dup2(tempStderrFd, 2);
+        return ;
     }
-    else { 
         string tellmsg = "*** ";
         tellmsg += m_clientPool.v_clients[nowId].name;
         tellmsg += " told you ***: ";
         tellmsg += tellContent;
         tellmsg += '\n';
         sendMessage(destId - 1, nowId, tellmsg);
-    }
+
+        dup2(tempStdoutFd, 1);
+        dup2(tempStderrFd, 2);
 }
 
 
